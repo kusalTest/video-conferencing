@@ -1,23 +1,9 @@
-/*
- * (C) Copyright 2014 Kurento (http://kurento.org/)
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
 
 var ws = new WebSocket('wss://' + location.host + '/groupcall');
 var participants = {};
 var name;
+var videoInput, videoOutput;
+var webRtcPeer;
 
 window.onbeforeunload = function() {
 	ws.close();
@@ -40,14 +26,23 @@ ws.onmessage = function(message) {
 	case 'receiveVideoAnswer':
 		receiveVideoResponse(parsedMessage);
 		break;
-	case 'iceCandidate':
+	case 'peerConnection':
+        peerWithEndpoint();
+        break;
+	/*case 'iceCandidate':
 		participants[parsedMessage.name].rtcPeer.addIceCandidate(parsedMessage.candidate, function (error) {
 	        if (error) {
 		      console.error("Error adding candidate: " + error);
 		      return;
 	        }
 	    });
-	    break;
+	    break;*/
+        case 'iceCandidate':
+            webRtcPeer.addIceCandidate(parsedMessage.candidate, function(error) {
+                if (error)
+                    return console.error('Error adding candidate: ' + error);
+            });
+            break;
 	default:
 		console.error('Unrecognized message', parsedMessage);
 	}
@@ -74,9 +69,15 @@ function onNewParticipant(request) {
 }
 
 function receiveVideoResponse(result) {
-	participants[result.name].rtcPeer.processAnswer (result.sdpAnswer, function (error) {
+	/*participants[result.name].rtcPeer.processAnswer (result.sdpAnswer, function (error) {
 		if (error) return console.error (error);
-	});
+	});*/
+    console.log('SDP answer received from server. Processing ...');
+
+    webRtcPeer.processAnswer(result.sdpAnswer, function(error) {
+        if (error)
+            return console.error(error);
+    });
 }
 
 function callResponse(message) {
@@ -127,9 +128,9 @@ function leaveRoom() {
 		id : 'leaveRoom'
 	});
 
-	for ( var key in participants) {
+	/*for ( var key in participants) {
 		participants[key].dispose();
-	}
+	}*/
 
 	document.getElementById('join').style.display = 'block';
 	document.getElementById('room').style.display = 'none';
@@ -156,15 +157,53 @@ function receiveVideo(sender) {
 	});;
 }
 
-function onParticipantLeft(request) {
-	console.log('Participant ' + request.name + ' left');
-	var participant = participants[request.name];
-	participant.dispose();
-	delete participants[request.name];
-}
-
 function sendMessage(message) {
 	var jsonMessage = JSON.stringify(message);
 	console.log('Senging message: ' + jsonMessage);
 	ws.send(jsonMessage);
+}
+
+function peerWithEndpoint(){
+	var loaclparticipant = new Participant("input");
+	var remoteparticipant = new Participant("output");
+
+	videoInput = loaclparticipant.getVideoElement();
+	videoOutput = remoteparticipant.getVideoElement();
+
+    var options = {
+        localVideo : videoInput,
+        remoteVideo : videoOutput,
+        onicecandidate : onIceCandidate
+    }
+    webRtcPeer = new kurentoUtils.WebRtcPeer.WebRtcPeerSendrecv(options,
+        function(error) {
+            if (error)
+                return console.error(error);
+            webRtcPeer.generateOffer(onOffer);
+        });
+}
+
+function onIceCandidate(candidate) {
+    console.log('Local candidate' + JSON.stringify(candidate));
+
+    var message = {
+        id : 'onIceCandidate',
+        candidate : candidate
+    };
+    sendMessage(message);
+}
+
+function onOffer(error, offerSdp) {
+    if (error)
+        return console.error('Error generating the offer');
+    console.info('Invoking SDP offer callback function ' + location.host);
+    var message = {
+        id : 'receiveVideoFrom',
+        sdpOffer : offerSdp
+    }
+    sendMessage(message);
+}
+
+function onError(error) {
+    console.error(error);
 }

@@ -22,12 +22,7 @@ import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import org.kurento.client.Continuation;
-import org.kurento.client.EventListener;
-import org.kurento.client.IceCandidate;
-import org.kurento.client.IceCandidateFoundEvent;
-import org.kurento.client.MediaPipeline;
-import org.kurento.client.WebRtcEndpoint;
+import org.kurento.client.*;
 import org.kurento.jsonrpc.JsonUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,16 +47,21 @@ public class UserSession implements Closeable {
 
   private final String roomName;
   private final WebRtcEndpoint outgoingMedia;
+  private final HubPort hubPort;
   private final ConcurrentMap<String, WebRtcEndpoint> incomingMedia = new ConcurrentHashMap<>();
 
   public UserSession(final String name, String roomName, final WebSocketSession session,
-      MediaPipeline pipeline) {
+      MediaPipeline pipeline, Hub hub) {
 
     this.pipeline = pipeline;
     this.name = name;
     this.session = session;
     this.roomName = roomName;
+    this.hubPort = new HubPort.Builder(hub).build();
     this.outgoingMedia = new WebRtcEndpoint.Builder(pipeline).build();
+
+    outgoingMedia.connect(hubPort);
+    hubPort.connect(outgoingMedia);
 
     this.outgoingMedia.addIceCandidateFoundListener(new EventListener<IceCandidateFoundEvent>() {
 
@@ -69,7 +69,7 @@ public class UserSession implements Closeable {
       public void onEvent(IceCandidateFoundEvent event) {
         JsonObject response = new JsonObject();
         response.addProperty("id", "iceCandidate");
-        response.addProperty("name", name);
+        //response.addProperty("name", name);
         response.add("candidate", JsonUtils.toJsonObject(event.getCandidate()));
         try {
           synchronized (session) {
@@ -80,6 +80,8 @@ public class UserSession implements Closeable {
         }
       }
     });
+
+    //this.outgoingMedia.gatherCandidates();
   }
 
   public WebRtcEndpoint getOutgoingWebRtcPeer() {
@@ -118,6 +120,37 @@ public class UserSession implements Closeable {
     this.sendMessage(scParams);
     log.debug("gather candidates");
     this.getEndpointForUser(sender).gatherCandidates();
+  }
+
+  public void receiveVideo(String sdpOffer) throws IOException {
+    final String sdpAnswer = this.outgoingMedia.processOffer(sdpOffer);
+    final JsonObject sendAnswer = new JsonObject();
+    sendAnswer.addProperty("id", "receiveVideoAnswer");
+    sendAnswer.addProperty("sdpAnswer", sdpAnswer);
+
+    this.sendMessage(sendAnswer);
+
+    log.info("SDP negociation");
+
+    this.outgoingMedia.addIceCandidateFoundListener(new EventListener<IceCandidateFoundEvent>() {
+
+      @Override
+      public void onEvent(IceCandidateFoundEvent event) {
+        JsonObject response = new JsonObject();
+        response.addProperty("id", "iceCandidate");
+        //response.addProperty("name", name);
+        response.add("candidate", JsonUtils.toJsonObject(event.getCandidate()));
+        try {
+          synchronized (session) {
+            session.sendMessage(new TextMessage(response.toString()));
+          }
+        } catch (IOException e) {
+          log.debug(e.getMessage());
+        }
+      }
+    });
+
+    this.outgoingMedia.gatherCandidates();
   }
 
   private WebRtcEndpoint getEndpointForUser(final UserSession sender) {

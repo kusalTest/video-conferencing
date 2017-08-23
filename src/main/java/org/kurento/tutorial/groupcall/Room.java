@@ -27,7 +27,9 @@ import java.util.concurrent.ConcurrentMap;
 
 import javax.annotation.PreDestroy;
 
+import org.kurento.client.Composite;
 import org.kurento.client.Continuation;
+import org.kurento.client.Hub;
 import org.kurento.client.MediaPipeline;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +50,7 @@ public class Room implements Closeable {
   private final ConcurrentMap<String, UserSession> participants = new ConcurrentHashMap<>();
   private final MediaPipeline pipeline;
   private final String name;
+  private final Composite composite;
 
   public String getName() {
     return name;
@@ -56,6 +59,7 @@ public class Room implements Closeable {
   public Room(String roomName, MediaPipeline pipeline) {
     this.name = roomName;
     this.pipeline = pipeline;
+    this.composite = new Composite.Builder(this.pipeline).build();
     log.info("ROOM {} has been created", roomName);
   }
 
@@ -66,10 +70,11 @@ public class Room implements Closeable {
 
   public UserSession join(String userName, WebSocketSession session) throws IOException {
     log.info("ROOM {}: adding participant {}", userName, userName);
-    final UserSession participant = new UserSession(userName, this.name, session, this.pipeline);
-    joinRoom(participant);
+    final UserSession participant = new UserSession(userName, this.name, session, this.pipeline, this.composite);
+    //joinRoom(participant);
     participants.put(participant.getName(), participant);
-    sendParticipantNames(participant);
+    //sendParticipantNames(participant);
+    connectBrowser(participant);
     return participant;
   }
 
@@ -141,6 +146,14 @@ public class Room implements Closeable {
     log.debug("PARTICIPANT {}: sending a list of {} participants", user.getName(),
         participantsArray.size());
     user.sendMessage(existingParticipantsMsg);
+  }
+
+  public void connectBrowser(UserSession user) throws IOException {
+    log.info("send request to browser for start the webrtc");
+    final JsonObject response = new JsonObject();
+    response.addProperty("id", "peerConnection");
+
+    user.sendMessage(response);
   }
 
   public Collection<UserSession> getParticipants() {
